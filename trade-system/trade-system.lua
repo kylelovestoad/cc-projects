@@ -2,20 +2,22 @@ SYSTEM_NAME = "&6&lTrading System"
 BRACKETS = "[]"
 BRACKET_COLOR = "&e"
 
+CommandPart = {
+    PREFIX = "$"
+    TRADE = "trade",
+    ADD = "add"
+    LIST = "list"
+    HELP = "help"
+}
 
--- function 
-
-function selectCountIfNecessary(item)
-    if item.count == 1 then
-        return "$"
-    else
-
-    end
+function commandStringOf(...)
+    local args = select("#",...)
+    return CommandPart.PREFIX .. table.concat(args, " ")
 end
 
 function formatItems(items)
     formattedItems = {}
-    for index,item in ipairs(items) do
+    for index, item in ipairs(items) do
         table.insert(formattedItems, formatItem(item))
     end
     return formattedItems
@@ -45,8 +47,8 @@ function formatItem(item)
             }
         },
         clickEvent = {
-            action = "run_command"
-            value = selectCountIfNecessary(item)
+            action = "suggest_command",
+            value = commandStringOf(CommandPart.TRADE, CommandPart.ADD, item.name, item.count)
         },
         extra = {{
             text = " x" .. item.count .. "\n",
@@ -87,29 +89,40 @@ function getInventoryManagerForPlayer(player, managers)
     return nil
 end
 
+function startTradeSelectMenu(player, manager, chatBox)
+    local inv = manager.getItems()
+    message = {
+        { 
+            text = "\nChoose items to trade, then run ",
+            color = "gold",
+            bold = true,
+        },
+        {
+            text = "$"
+        }
+        {
+            text = "Your inventory:\n",
+            color = "yellow",
+            bold = true,
+            extra = formatItems(inv)
+        }
+    }
+
+    local json = textutils.serialiseJSON(message)
+    chatBox.sendFormattedMessageToPlayer(json, player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
+end
+
 function runCommand(manager, chatBox, commandArgs)
     player = manager.getOwner()
     
-    if commandArgs[1] ~= "trade" then
+    if commandArgs[1] ~= CommandPart.TRADE then
         return
     end
 
     if commandArgs[2] == "create" then
-        local inv = manager.getItems()
-        message = {
-            {
-                text = "\nYour inventory:\n",
-                color = "yellow",
-                bold = true,
-                extra = formatItems(inv)
-            }
-        }
-        
-
-        local json = textutils.serialiseJSON(message)
-        chatBox.sendFormattedMessageToPlayer(json, player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
+        startTradeSelectMenu(player, manager, chatBox)
     else
-        chatBox.sendMessageToPlayer("Type $trade help for help", player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
+        chatBox.sendMessageToPlayer("Type " .. commandStringOf(CommandPart.TRADE, CommandPart.HELP) .. " for help", player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
     end
 end
 
