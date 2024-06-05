@@ -1,7 +1,10 @@
 SYSTEM_NAME = "&6&lTrading System"
 BRACKETS = "[]"
 BRACKET_COLOR = "&e"
-DATABASE_DIR = "./data"
+DATABASE_DIR = "./db"
+QUEUED_DB_FILE = DATABASE_DIR .. "/queued"
+LISTED_DB_FILE = DATABASE_DIR .. "/listed"
+
 
 CommandPart = {
     PREFIX = "$",   
@@ -121,8 +124,8 @@ function startTradeSelectMenu(player, inv, chatBox)
         }
     }
 
-    local json = textutils.serialiseJSON(message)
-    chatBox.sendFormattedMessageToPlayer(json, player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
+    local item = textutils.serialiseJSON(message)
+    chatBox.sendFormattedMessageToPlayer(item, player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
 end
 
 -- gets the inventory inside the chest used for trading
@@ -139,8 +142,6 @@ function getTradeChestInventory(player, readers)
         else
             return nil
         end
-
-        print(textutils.serializeJSON(blockData))
 
         if items[MARKER_SLOT].id == "advancedperipherals:memory_card" and items[MARKER_SLOT].tag.owner == player then
             -- This only works since the marker will always be the first element. If MARKER_SLOT is set to anything but 1 this won't work!!
@@ -171,30 +172,28 @@ function getSavedItemsFromFile(file, items)
         return
     end
 
-    local i = 1
     for line in io.lines(file) do
-        items[i] = textutils.unserialiseJSON(line)
-        i = i + 1
+        -- First we get the item from the database
+        item = textutils.unserialiseJSON(line)
+    
+        -- Finally we use the player attribute from the item to determine which player section the item goes to
+        table.insert(items[item.player], item)
     end
 end
 
-function addItemToFile(file, item, itemList)
-    if not fs.exists(file) then
-        fs.
+function addTableToFile(file, tbl, inMemStorage)
     h = fs.open(file, "a")
-    last = h.seek("end", 0)
-    item.dbId = last + 1
-    h.write(textutils.serialiseJSON(item) .. "\n")
-    table.insert(itemList, item)
+    h.write(textutils.serialiseJSON(tbl) .. "\n")
+    table.insert(inMemStorage, tbl)
     h.close()
 end
 
-function removeItemFromFile(file, id, itemList)
+function removeTableFromFile(file, id, inMemStorage)
     h = fs.open(file, "w")
     itemLine = h.seek("set", id)
     -- remove the line where the item is by overwriting it
     h.write("")
-    table.remove(itemList, id)
+    table.remove(inMemStorage, id)
     h.close()
 end
 
@@ -230,10 +229,9 @@ function addItemToTrade(player, tradeItem, chatBox, manager, slot, count)
             }
         }
 
-        local json = textutils.serialiseJSON(message)
+        local item = textutils.serialiseJSON(message)
 
-        chatBox.sendFormattedMessageToPlayer(json, player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
-        tradeItem.count = count
+        chatBox.sendFormattedMessageToPlayer(item, player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
         manager.removeItemFromPlayer("up", tradeItem)
     else
         chatBox.sendMessageToPlayer("The inventory slot you provided was empty", player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
@@ -263,12 +261,29 @@ function runCommand(manager, chatBox, readers, trades, commandArgs)
         -- If slot and count are present, then try to add the item
         if slot and count then
             tradeItem = findItemInSlot(inv, slot)
+            -- The database needs to know the player for easy display
+            tradeItem.player = player
+            -- Set the full count to the new count (The count that is being subtracted from your inventory)
+            tradeItem.count = count
             addItemToTrade(player, tradeItem, chatBox, manager, slot, count)
-            addItemToFile(file, tradeItem, trades.queuedTrades)
+            -- Adds the item to the queuedItems persistent storage
+            addTableToFile(QUEUED_DB_FILE, tradeItem, trades.queuedTradeItems)
         else
             -- If one is not there the command is invalid so redirect to help command
             sendReferenceToHelp(player, chatBox)
         end
+        return
+    end
+
+    if commandArgs[2] == "list" then
+
+        queued = trades.queuedTradeItems[player]
+        addTableToFile(LISTED_DB_FILE, queued, trades.listedTrades[player])
+
+        for i,tradeItem in ipairs(queued) do
+            removeTableFromFile(QUEUED_DB_FILE, i, queued)
+        end
+
         return
     end
 
@@ -286,8 +301,8 @@ function runCommand(manager, chatBox, readers, trades, commandArgs)
 
                 -- table.insert(formattedItems, message)
             end
-            -- local json = textutils.serialiseJSON(formattedItems)
-            -- chatBox.sendFormattedMessageToPlayer(json, player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
+            -- local item = textutils.serialiseJSON(formattedItems)
+            -- chatBox.sendFormattedMessageToPlayer(item, player, SYSTEM_NAME, BRACKETS, BRACKET_COLOR)
         end
 
         return
@@ -307,30 +322,35 @@ else
     fs.makeDir(DATABASE_DIR)
 end
 
+local trades = {}
+trades.queuedTradeItems = {}
+trades.listedTrades = {}
+-- Find inventory managers for each player. We need the {} to make it into a table
+inventoryManagers = { peripheral.find("inventoryManager") }
+
+for _,manager in pairs(inventoryManagers) do
+    owner = manager.getOwner()
+    if owner ~= nil then
+        trades.queuedTradeItems[owner] = {}
+        trades.listedTrades[owner] = {}
+    end
+end
+
+getSavedItemsFromFile(QUEUED_DB_FILE, trades.queuedTradeItems)
+getSavedItemsFromFile(LISTED_DB_FILE, trades.listedTrades)
+
+print(textutils.serializeJSON(trades.queuedTradeItems))
+print(textutils.serializeJSON(trades.listedTrades))
+
 while true do
     -- This will only give command args if the chat is a command "starts with $"
     local player, commandArgs = awaitCommand()
     
-    -- Find inventory managers for each player. We need the {} to make it into a table
-    local inventoryManagers = { peripheral.find("inventoryManager") }
+
     -- Create the readers to read the trading containers
     local readers = { peripheral.find("blockReader") }
     local chatBox = peripheral.find("chatBox")
 
-    local trades = {}
-
-    trades.queuedTrades = {}
-    trades.listedTrades = {}
-    for _,manager in pairs(inventoryManagers) do
-        owner = manager.getOwner()
-        if owner ~= nil then
-            trades.queuedTrades[owner] = {}
-            trades.listedTrades[owner] = {}
-        end
-    end
-
-    getSavedItemsFromFile("queued", trades.queuedTrades)
-    getSavedItemsFromFile("listed", trades.listedTrades)
 
     -- If it is a command, get the running player's inventory and run it
     if commandArgs then
